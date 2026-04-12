@@ -1,0 +1,182 @@
+Yapper Server
+Copyright (c) 2026 Yapper. All rights reserved.
+
+This product is proprietary software. See the LICENSE file for terms of use.
+
+================================================================================
+THIRD-PARTY NOTICES
+================================================================================
+
+This software incorporates components from the following open-source projects.
+Their original copyright notices and license types are listed below. Full
+license texts are included in the LICENSE file.
+
+
+--- LiveKit Server ---
+
+Copyright 2023 LiveKit, Inc.
+License: Apache License 2.0
+Source: https://github.com/livekit/livekit
+
+This product is a derivative work of the LiveKit server, modified by Yapper.
+
+
+--- LiveKit Protocol ---
+
+Copyright 2023 LiveKit, Inc.
+License: Apache License 2.0
+Source: https://github.com/livekit/protocol
+
+
+--- LiveKit Media Transport Util ---
+
+Copyright 2023 LiveKit, Inc.
+License: Apache License 2.0
+Source: https://github.com/livekit/mediatransportutil
+
+
+--- LiveKit PSRPC ---
+
+Copyright 2023 LiveKit, Inc.
+License: Apache License 2.0
+Source: https://github.com/livekit/psrpc
+
+
+--- Pion ion-sfu ---
+
+Portions of the SFU code originated from ion-sfu.
+Copyright (c) 2019 Pion
+License: MIT License
+Source: https://github.com/pion/ion-sfu
+
+
+--- Pion WebRTC Stack ---
+
+Copyright (c) Pion contributors
+License: MIT License
+Packages: webrtc, ice, dtls, srtp, sctp, sdp, rtp, rtcp, datachannel,
+  transport, turn, stun, interceptor, logging, mdns, randutil
+Source: https://github.com/pion
+
+
+--- LiveKit Spatial Audio Example (Web Client) ---
+
+Copyright 2023 LiveKit, Inc.
+License: Apache License 2.0
+Source: https://github.com/livekit-examples/spatial-audio
+
+
+================================================================================
+Go Module Dependencies
+================================================================================
+
+The following Go modules are statically linked into the server binary.
+
+Package                                          License
+-------                                          -------
+buf.build/gen/go/.../protovalidate               Apache-2.0
+buf.build/go/protovalidate                       Apache-2.0
+buf.build/go/protoyaml                           Apache-2.0
+cel.dev/expr                                     Apache-2.0
+github.com/antlr4-go/antlr/v4                   BSD-3-Clause
+github.com/benbjohnson/clock                     MIT
+github.com/beorn7/perks                          MIT
+github.com/bep/debounce                          MIT
+github.com/cenkalti/backoff/v5                   MIT
+github.com/cespare/xxhash/v2                     MIT
+github.com/d5/tengo/v2                           MIT
+github.com/dennwc/iters                          MIT
+github.com/dgryski/go-rendezvous                 MIT
+github.com/dustin/go-humanize                    MIT
+github.com/elliotchance/orderedmap/v2            MIT
+github.com/florianl/go-tc                        MIT
+github.com/frostbyte73/core                      MIT
+github.com/fsnotify/fsnotify                     BSD-3-Clause
+github.com/gammazero/deque                       MIT
+github.com/gammazero/workerpool                  MIT
+github.com/go-jose/go-jose/v3                    Apache-2.0
+github.com/go-logr/logr                          Apache-2.0
+github.com/go-logr/stdr                          Apache-2.0
+github.com/google/cel-go                         Apache-2.0
+github.com/google/uuid                           BSD-3-Clause
+github.com/gorilla/websocket                     BSD-2-Clause
+github.com/grpc-ecosystem/grpc-gateway/v2        BSD-3-Clause
+github.com/hashicorp/go-cleanhttp                MPL-2.0
+github.com/hashicorp/go-retryablehttp            MPL-2.0
+github.com/hashicorp/go-version                  MPL-2.0
+github.com/hashicorp/golang-lru                  MPL-2.0
+github.com/hashicorp/golang-lru/v2               MPL-2.0
+github.com/jellydator/ttlcache/v3                MIT
+github.com/josharian/native                      MIT
+github.com/jxskiss/base62                        MIT
+github.com/klauspost/compress                    Apache-2.0
+github.com/klauspost/cpuid/v2                    MIT
+github.com/lithammer/shortuuid/v4                MIT
+github.com/mackerelio/go-osstat                  Apache-2.0
+github.com/mdlayher/netlink                      MIT
+github.com/mdlayher/socket                       MIT
+github.com/mitchellh/go-homedir                  MIT
+github.com/munnerz/goautoneg                     BSD-3-Clause
+github.com/nats-io/nats.go                       Apache-2.0
+github.com/nats-io/nkeys                         Apache-2.0
+github.com/nats-io/nuid                          Apache-2.0
+github.com/nyaruka/phonenumbers                  MIT
+github.com/pion/datachannel                      MIT
+github.com/pion/dtls/v3                          MIT
+github.com/pion/ice/v4                           MIT
+github.com/pion/interceptor                      MIT
+github.com/pion/logging                          MIT
+github.com/pion/mdns/v2                          MIT
+github.com/pion/randutil                         MIT
+github.com/pion/rtcp                             MIT
+github.com/pion/rtp                              MIT
+github.com/pion/sctp                             MIT
+github.com/pion/sdp/v3                           MIT
+github.com/pion/srtp/v3                          MIT
+github.com/pion/stun/v3                          MIT
+github.com/pion/transport/v4                     MIT
+github.com/pion/turn/v4                          MIT
+github.com/pion/webrtc/v4                        MIT
+github.com/pkg/errors                            BSD-2-Clause
+github.com/prometheus/client_golang              Apache-2.0
+github.com/prometheus/client_model               Apache-2.0
+github.com/prometheus/common                     Apache-2.0
+github.com/prometheus/procfs                     Apache-2.0
+github.com/puzpuzpuz/xsync/v3                   Apache-2.0
+github.com/redis/go-redis/v9                     BSD-2-Clause
+github.com/remyoudompheng/bigfft                 BSD-3-Clause
+github.com/rs/cors                               MIT
+github.com/thoas/go-funk                         MIT
+github.com/tomnomnom/linkheader                  MIT
+github.com/twitchtv/twirp                        Apache-2.0
+github.com/ua-parser/uap-go                      MIT
+github.com/urfave/cli/v3                         MIT
+github.com/urfave/negroni/v3                     MIT
+github.com/wlynxg/anet                          BSD-3-Clause
+github.com/zeebo/xxh3                            BSD-2-Clause
+go.opentelemetry.io/auto/sdk                     Apache-2.0
+go.opentelemetry.io/otel                         Apache-2.0
+go.opentelemetry.io/otel/exporters/otlp/otlptrace         Apache-2.0
+go.opentelemetry.io/otel/exporters/otlp/otlptracehttp     Apache-2.0
+go.opentelemetry.io/otel/metric                  Apache-2.0
+go.opentelemetry.io/otel/sdk                     Apache-2.0
+go.opentelemetry.io/otel/trace                   Apache-2.0
+go.opentelemetry.io/proto/otlp                   Apache-2.0
+go.uber.org/atomic                               MIT
+go.uber.org/multierr                             MIT
+go.uber.org/zap                                  MIT
+golang.org/x/crypto                              BSD-3-Clause
+golang.org/x/exp                                 BSD-3-Clause
+golang.org/x/mod                                 BSD-3-Clause
+golang.org/x/net                                 BSD-3-Clause
+golang.org/x/sync                                BSD-3-Clause
+golang.org/x/sys                                 BSD-3-Clause
+golang.org/x/text                                BSD-3-Clause
+golang.org/x/time                                BSD-3-Clause
+google.golang.org/genproto                       Apache-2.0
+google.golang.org/grpc                           Apache-2.0
+google.golang.org/protobuf                       BSD-3-Clause
+gopkg.in/yaml.v3                                 MIT
+modernc.org/libc                                 MIT
+modernc.org/memory                               BSD-3-Clause
+modernc.org/sqlite                               BSD-3-Clause
