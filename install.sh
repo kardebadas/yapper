@@ -299,7 +299,7 @@ setup_license() {
     if [[ -z "${INSTANCE_PORT}" ]]; then
         echo ""
         while true; do
-            read -rp "  Enter the port for this instance (default 7880): " INSTANCE_PORT </dev/tty
+            read -rp "  Enter the port for this instance [default=7880]: " INSTANCE_PORT </dev/tty
             INSTANCE_PORT="${INSTANCE_PORT:-7880}"
             if ! [[ "${INSTANCE_PORT}" =~ ^[0-9]+$ ]]; then
                 echo "  Port must be a number."; INSTANCE_PORT=""
@@ -321,7 +321,7 @@ setup_license() {
     echo -e "  The server listen port is the local TCP port the Yapper binary binds to."
     echo -e "  This is different from the instance port in the license (which may be 443 behind a reverse proxy)."
     while true; do
-        read -rp "  Yapper server listen port (default 7880): " SERVER_PORT </dev/tty
+        read -rp "  Yapper server listen port [default=7880]: " SERVER_PORT </dev/tty
         SERVER_PORT="${SERVER_PORT:-7880}"
         if ! [[ "${SERVER_PORT}" =~ ^[0-9]+$ ]]; then
             echo "  Port must be a number."; SERVER_PORT=""
@@ -369,7 +369,7 @@ collect_options() {
         # Domain — default to license domain
         echo ""
         while true; do
-            read -rp "  Caddy domain [${INSTANCE_DOMAIN}]: " CADDY_DOMAIN </dev/tty
+            read -rp "  Caddy domain [default=${INSTANCE_DOMAIN}]: " CADDY_DOMAIN </dev/tty
             CADDY_DOMAIN="${CADDY_DOMAIN:-${INSTANCE_DOMAIN}}"
             CADDY_DOMAIN="${CADDY_DOMAIN#http://}"
             CADDY_DOMAIN="${CADDY_DOMAIN#https://}"
