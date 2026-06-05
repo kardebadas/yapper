@@ -236,6 +236,12 @@ check_prerequisites() {
 setup_license() {
     log_step 2 "License setup"
     echo ""
+    echo -e "  ${BOLD}How to get your license:${RESET}"
+    echo -e "    1. Log in to ${CYAN}https://yapper.gg${RESET}"
+    echo -e "    2. Open ${BOLD}Licenses${RESET} from the menu"
+    echo -e "    3. Click ${BOLD}View License${RESET} on the license you want to use"
+    echo -e "    4. Copy the entire contents shown on that page"
+    echo ""
     echo -e "  Paste your license below, then type ${BOLD}END${RESET} on its own line when finished:"
     echo ""
 
@@ -505,36 +511,68 @@ download_binary() {
 
 # ── [5/10] Runtime dependencies ────────────────────────────────────────────
 
-check_missing_libs() {
-    local bin="$1"
+# Look up which package provides a shared library (e.g., "libstdc++.so.6").
+# Echoes the package name, or nothing if it cannot be resolved on this distro.
+resolve_lib_to_package() {
+    local lib="$1"
+    case "${OS_FAMILY}" in
+        debian)
+            command -v apt-file &>/dev/null || return 0
+            apt-file search "${lib}" 2>/dev/null | awk -F: '{print $1}' | head -1
+            ;;
+        rhel)
+            if [[ "${PKG_MANAGER}" == "dnf" ]]; then
+                dnf repoquery --whatprovides "*/${lib}" --qf '%{name}\n' 2>/dev/null | head -1
+            else
+                yum -q provides "*/${lib}" 2>/dev/null \
+                    | awk '/ : / && $1 !~ /^(Repo|Matched|Filename|Provides|Last)/ {print $1; exit}' \
+                    | sed -E 's/-[0-9][^-]*-[^-]+\.[a-z0-9_]+$//'
+            fi
+            ;;
+        arch)
+            pacman -Fq "${lib}" 2>/dev/null | head -1 | awk -F/ '{print $NF}'
+            ;;
+    esac
+}
 
-    if [[ ! -x "${bin}" ]]; then
-        log_fail "Binary not found or not executable: ${bin}"
-    fi
+install_package_quiet() {
+    local pkg="$1"
+    case "${OS_FAMILY}" in
+        debian) apt-get install -y -qq "${pkg}" &>/dev/null ;;
+        rhel)   ${PKG_MANAGER} install -y -q "${pkg}" &>/dev/null ;;
+        arch)   pacman -S --noconfirm "${pkg}" &>/dev/null ;;
+    esac
+}
 
-    # Handle static binaries
-    local ldd_output
-    ldd_output=$(ldd "${bin}" 2>&1 || true)
-
-    if echo "${ldd_output}" | grep -qi "not a dynamic executable"; then
-        log_ok "Binary is statically linked — no runtime libraries needed"
-        return 0
-    fi
-
-    local missing
-    missing=$(echo "${ldd_output}" | awk '/not found/ {print $1}')
-
-    if [[ -z "${missing}" ]]; then
-        log_ok "All shared library dependencies are present"
-        return 0
-    fi
-
-    log_warn "Missing shared libraries:"
-    while IFS= read -r lib; do
-        [[ -n "${lib}" ]] && log_info "  - ${lib}"
-    done <<< "${missing}"
-
-    return 1
+print_manual_lib_instructions() {
+    local missing_list=("$@")
+    echo ""
+    echo -e "  ${BOLD}How to install the missing libraries manually:${RESET}"
+    case "${OS_FAMILY}" in
+        debian)
+            echo -e "    ${CYAN}sudo apt-get install -y apt-file${RESET}"
+            echo -e "    ${CYAN}sudo apt-file update${RESET}"
+            echo -e "    For each library below, look up its package, then install it:"
+            for lib in "${missing_list[@]}"; do
+                echo -e "      ${CYAN}apt-file search ${lib}${RESET}   → then: ${CYAN}sudo apt-get install <package>${RESET}"
+            done
+            ;;
+        rhel)
+            echo -e "    For each library below, look up its package, then install it:"
+            for lib in "${missing_list[@]}"; do
+                echo -e "      ${CYAN}${PKG_MANAGER} provides '*/${lib}'${RESET}   → then: ${CYAN}sudo ${PKG_MANAGER} install <package>${RESET}"
+            done
+            ;;
+        arch)
+            echo -e "    ${CYAN}sudo pacman -Fy${RESET}"
+            echo -e "    For each library below, look up its package, then install it:"
+            for lib in "${missing_list[@]}"; do
+                echo -e "      ${CYAN}pacman -F ${lib}${RESET}   → then: ${CYAN}sudo pacman -S <package>${RESET}"
+            done
+            ;;
+    esac
+    echo ""
+    echo -e "  Once they are installed, re-run this installer to resume."
 }
 
 install_runtime_deps() {
@@ -567,15 +605,90 @@ install_runtime_deps() {
     esac
     log_ok "Runtime packages installed"
 
-    # Verify with ldd
-    if command -v ldd &>/dev/null; then
-        check_missing_libs "${bin}" || \
-            log_fail "Some shared libraries are still missing after installing runtime dependencies"
-    else
+    if ! command -v ldd &>/dev/null; then
         log_warn "ldd not available — skipping library verification"
+        echo ""
+        return
     fi
 
+    local ldd_output missing
+    ldd_output=$(ldd "${bin}" 2>&1 || true)
+
+    if echo "${ldd_output}" | grep -qi "not a dynamic executable"; then
+        log_ok "Binary is statically linked — no runtime libraries needed"
+        echo ""
+        return
+    fi
+
+    missing=$(echo "${ldd_output}" | awk '/not found/ {print $1}')
+    if [[ -z "${missing}" ]]; then
+        log_ok "All shared library dependencies are present"
+        echo ""
+        return
+    fi
+
+    log_warn "Some shared libraries are still missing:"
+    while IFS= read -r lib; do
+        [[ -n "${lib}" ]] && log_info "  - ${lib}"
+    done <<< "${missing}"
+
+    log_info "Attempting to resolve and install matching packages..."
+
+    # Refresh package-file index once so we can look up providers
+    case "${OS_FAMILY}" in
+        debian)
+            if ! command -v apt-file &>/dev/null; then
+                apt-get install -y -qq apt-file &>/dev/null || true
+            fi
+            if command -v apt-file &>/dev/null; then
+                log_info "Updating apt-file database (this may take a moment)..."
+                apt-file update &>/dev/null || log_warn "apt-file update failed — auto-resolution may be incomplete"
+            fi
+            ;;
+        arch)
+            log_info "Refreshing pacman file database (this may take a moment)..."
+            pacman -Fy &>/dev/null || log_warn "pacman -Fy failed — auto-resolution may be incomplete"
+            ;;
+    esac
+
+    while IFS= read -r lib; do
+        [[ -z "${lib}" ]] && continue
+        local pkg
+        pkg="$(resolve_lib_to_package "${lib}" 2>/dev/null || true)"
+        if [[ -n "${pkg}" ]]; then
+            log_info "  ${lib} → installing ${pkg}"
+            if install_package_quiet "${pkg}"; then
+                log_ok "  Installed ${pkg}"
+            else
+                log_warn "  Failed to install ${pkg}"
+            fi
+        else
+            log_warn "  Could not resolve ${lib} to a package"
+        fi
+    done <<< "${missing}"
+
+    # Re-check after auto-install
+    ldd_output=$(ldd "${bin}" 2>&1 || true)
+    missing=$(echo "${ldd_output}" | awk '/not found/ {print $1}')
+    if [[ -z "${missing}" ]]; then
+        log_ok "All shared library dependencies are now present"
+        echo ""
+        return
+    fi
+
+    # Still missing → show manual instructions and abort
+    log_warn "These libraries could not be installed automatically:"
+    local -a still_missing=()
+    while IFS= read -r lib; do
+        if [[ -n "${lib}" ]]; then
+            log_info "  - ${lib}"
+            still_missing+=("${lib}")
+        fi
+    done <<< "${missing}"
+
+    print_manual_lib_instructions "${still_missing[@]}"
     echo ""
+    log_fail "Cannot continue with missing shared libraries"
 }
 
 # ── [6/10] System user ─────────────────────────────────────────────────────
