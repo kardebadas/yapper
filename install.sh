@@ -658,26 +658,29 @@ install_runtime_deps() {
         | sed 's/^GLIBC_//' \
         | sort -V | tail -1)
     if [[ -n "${required_glibc}" ]]; then
-        local system_glibc
+        local system_glibc os_label
         system_glibc=$(ldd --version 2>&1 | head -1 | awk '{print $NF}')
+        os_label="${PRETTY_NAME:-${ID:-this OS}}"
         echo ""
-        log_warn "This system's glibc is too old for this build of yapper-server."
-        log_info "  Required: glibc ${required_glibc} or newer"
-        log_info "  Installed: glibc ${system_glibc:-unknown}"
+        log_warn "Your OS is too old to run this build of yapper-server."
+        log_info "  Detected OS: ${os_label}"
+        log_info "  Installed glibc: ${system_glibc:-unknown}"
+        log_info "  Required glibc:  ${required_glibc} or newer"
         echo ""
         echo -e "  ${BOLD}This cannot be fixed by installing a package.${RESET}"
-        echo -e "  glibc is the base system C library; replacing it on a running OS is unsafe."
+        echo -e "  glibc is the base system C library and ships with the OS itself —"
+        echo -e "  replacing it on a running system is unsafe. ${BOLD}You need a newer distro.${RESET}"
         echo ""
-        echo -e "  ${BOLD}Recommended OS versions (glibc ≥ 2.34):${RESET}"
+        echo -e "  ${BOLD}Supported distros (glibc ≥ 2.34):${RESET}"
         echo -e "    • Ubuntu 22.04 LTS or newer        (glibc 2.35+)"
         echo -e "    • Debian 12 'Bookworm' or newer    (glibc 2.36+)"
         echo -e "    • RHEL / Rocky / AlmaLinux 9+      (glibc 2.34+)"
         echo -e "    • Fedora 35 or newer"
         echo -e "    • Arch Linux (rolling)"
         echo ""
-        echo -e "  Upgrade the OS and re-run this installer."
+        echo -e "  Upgrade ${os_label} to one of the above and re-run this installer."
         echo ""
-        log_fail "Unsupported glibc version"
+        log_fail "Unsupported OS: glibc ${system_glibc:-unknown} is older than required ${required_glibc}"
     fi
 
     # Truly-missing libraries match the "=> not found" form only.
@@ -1093,6 +1096,11 @@ print_summary() {
         echo -e "    systemctl status ${UPDATE_UNIT_NAME}.timer"
         echo -e "    journalctl -u ${UPDATE_UNIT_NAME}.service -f"
     fi
+    echo ""
+    echo -e "  ${BOLD}Next steps — finish setup on yapper.gg:${RESET}"
+    echo -e "    1. Open ${CYAN}https://yapper.gg/servers${RESET}"
+    echo -e "    2. Click ${BOLD}My Servers${RESET}"
+    echo -e "    3. Select this server (${INSTANCE_DOMAIN}) to configure it"
     echo ""
     echo -e "${BOLD}════════════════════════════════════════════════════════════${RESET}"
     echo ""
