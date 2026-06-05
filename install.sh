@@ -409,6 +409,38 @@ collect_options() {
             require_free_tcp_port 80 "Caddy HTTP"
             log_ok "Port 80 is available"
         fi
+
+        # Caddy publishes the server on its own port (443 with SSL, 80 without).
+        # The license's instance_port is what yapper.gg tells clients to dial.
+        # If they don't match, clients cannot reach this server — offer to fix.
+        local expected_port
+        if [[ "${CADDY_SSL}" == true ]]; then
+            expected_port=443
+        else
+            expected_port=80
+        fi
+
+        if [[ "${INSTANCE_PORT}" != "${expected_port}" ]]; then
+            echo ""
+            log_warn "License port mismatch:"
+            log_info "  Your license says clients connect on port ${INSTANCE_PORT}"
+            log_info "  But Caddy will publish this server on port ${expected_port}"
+            echo ""
+            echo -e "  ${BOLD}If you keep instance_port=${INSTANCE_PORT}, yapper.gg will tell clients to"
+            echo -e "  dial ${INSTANCE_PORT}, which won't reach Caddy on ${expected_port}.${RESET}"
+            echo -e "  We can update ${CYAN}license.txt${RESET} to ${BOLD}instance_port=${expected_port}${RESET}."
+            echo -e "  ${YELLOW}Press Y if you're not sure.${RESET}"
+            if prompt_yes_no "Update instance_port to ${expected_port} in license.txt?" "yes"; then
+                local old_port="${INSTANCE_PORT}"
+                INSTANCE_PORT="${expected_port}"
+                # Anchor the match with a trailing newline so e.g. "instance_port=80"
+                # doesn't partially replace "instance_port=8080".
+                FINAL_LICENSE="${FINAL_LICENSE//instance_port=${old_port}$'\n'/instance_port=${INSTANCE_PORT}$'\n'}"
+                log_ok "instance_port updated to ${INSTANCE_PORT}"
+            else
+                log_warn "Keeping instance_port=${INSTANCE_PORT} — clients may not be able to connect"
+            fi
+        fi
     else
         log_info "Skipping reverse proxy"
     fi
