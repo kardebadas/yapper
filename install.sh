@@ -511,68 +511,97 @@ download_binary() {
 
 # ── [5/10] Runtime dependencies ────────────────────────────────────────────
 
-# Look up which package provides a shared library (e.g., "libstdc++.so.6").
-# Echoes the package name, or nothing if it cannot be resolved on this distro.
-resolve_lib_to_package() {
+# Static mapping from a missing shared library to the providing package on
+# each supported distro. The yapper binary only links against glibc today,
+# but a few extras are listed in case a future build pulls them in.
+# Echoes the package name on stdout, or nothing if the lib is not in the map.
+guess_package_for_lib() {
     local lib="$1"
     case "${OS_FAMILY}" in
         debian)
-            command -v apt-file &>/dev/null || return 0
-            apt-file search "${lib}" 2>/dev/null | awk -F: '{print $1}' | head -1
+            case "${lib}" in
+                libc.so.*|ld-linux*)              echo "libc6" ;;
+                libm.so.*|libpthread.so.*|libdl.so.*|librt.so.*|libresolv.so.*) echo "libc6" ;;
+                libstdc++.so.*)                   echo "libstdc++6" ;;
+                libgcc_s.so.*)                    echo "libgcc-s1" ;;
+                libssl.so.*|libcrypto.so.*)       echo "libssl3" ;;
+                libz.so.*)                        echo "zlib1g" ;;
+            esac
             ;;
         rhel)
-            if [[ "${PKG_MANAGER}" == "dnf" ]]; then
-                dnf repoquery --whatprovides "*/${lib}" --qf '%{name}\n' 2>/dev/null | head -1
-            else
-                yum -q provides "*/${lib}" 2>/dev/null \
-                    | awk '/ : / && $1 !~ /^(Repo|Matched|Filename|Provides|Last)/ {print $1; exit}' \
-                    | sed -E 's/-[0-9][^-]*-[^-]+\.[a-z0-9_]+$//'
-            fi
+            case "${lib}" in
+                libc.so.*|ld-linux*)              echo "glibc" ;;
+                libm.so.*|libpthread.so.*|libdl.so.*|librt.so.*|libresolv.so.*) echo "glibc" ;;
+                libstdc++.so.*)                   echo "libstdc++" ;;
+                libgcc_s.so.*)                    echo "libgcc" ;;
+                libssl.so.*|libcrypto.so.*)       echo "openssl-libs" ;;
+                libz.so.*)                        echo "zlib" ;;
+            esac
             ;;
         arch)
-            pacman -Fq "${lib}" 2>/dev/null | head -1 | awk -F/ '{print $NF}'
+            case "${lib}" in
+                libc.so.*|ld-linux*)              echo "glibc" ;;
+                libm.so.*|libpthread.so.*|libdl.so.*|librt.so.*|libresolv.so.*) echo "glibc" ;;
+                libstdc++.so.*|libgcc_s.so.*)     echo "gcc-libs" ;;
+                libssl.so.*|libcrypto.so.*)       echo "openssl" ;;
+                libz.so.*)                        echo "zlib" ;;
+            esac
             ;;
     esac
 }
 
-install_package_quiet() {
-    local pkg="$1"
+install_packages_quiet() {
+    local -a pkgs=("$@")
+    [[ "${#pkgs[@]}" -gt 0 ]] || return 0
     case "${OS_FAMILY}" in
-        debian) apt-get install -y -qq "${pkg}" &>/dev/null ;;
-        rhel)   ${PKG_MANAGER} install -y -q "${pkg}" &>/dev/null ;;
-        arch)   pacman -S --noconfirm "${pkg}" &>/dev/null ;;
+        debian) apt-get install -y -qq "${pkgs[@]}" &>/dev/null ;;
+        rhel)   ${PKG_MANAGER} install -y -q "${pkgs[@]}" &>/dev/null ;;
+        arch)   pacman -S --noconfirm "${pkgs[@]}" &>/dev/null ;;
     esac
 }
 
 print_manual_lib_instructions() {
-    local missing_list=("$@")
-    echo ""
-    echo -e "  ${BOLD}How to install the missing libraries manually:${RESET}"
+    local -a missing_list=("$@")
+
+    local install_cmd lookup_hint
     case "${OS_FAMILY}" in
-        debian)
-            echo -e "    ${CYAN}sudo apt-get install -y apt-file${RESET}"
-            echo -e "    ${CYAN}sudo apt-file update${RESET}"
-            echo -e "    For each library below, look up its package, then install it:"
-            for lib in "${missing_list[@]}"; do
-                echo -e "      ${CYAN}apt-file search ${lib}${RESET}   → then: ${CYAN}sudo apt-get install <package>${RESET}"
-            done
-            ;;
-        rhel)
-            echo -e "    For each library below, look up its package, then install it:"
-            for lib in "${missing_list[@]}"; do
-                echo -e "      ${CYAN}${PKG_MANAGER} provides '*/${lib}'${RESET}   → then: ${CYAN}sudo ${PKG_MANAGER} install <package>${RESET}"
-            done
-            ;;
-        arch)
-            echo -e "    ${CYAN}sudo pacman -Fy${RESET}"
-            echo -e "    For each library below, look up its package, then install it:"
-            for lib in "${missing_list[@]}"; do
-                echo -e "      ${CYAN}pacman -F ${lib}${RESET}   → then: ${CYAN}sudo pacman -S <package>${RESET}"
-            done
-            ;;
+        debian) install_cmd="sudo apt-get install -y"; lookup_hint="https://packages.debian.org or https://packages.ubuntu.com" ;;
+        rhel)   install_cmd="sudo ${PKG_MANAGER} install -y"; lookup_hint="sudo ${PKG_MANAGER} provides '*/<libname>'" ;;
+        arch)   install_cmd="sudo pacman -S"; lookup_hint="https://archlinux.org/packages/" ;;
     esac
+
+    # Split the still-missing libs into "we know the package" and "we don't"
+    local -a known_pkgs=() unknown_libs=()
+    local lib pkg already
+    for lib in "${missing_list[@]}"; do
+        pkg="$(guess_package_for_lib "${lib}")"
+        if [[ -n "${pkg}" ]]; then
+            already=false
+            for existing in "${known_pkgs[@]:-}"; do
+                [[ "${existing}" == "${pkg}" ]] && { already=true; break; }
+            done
+            ${already} || known_pkgs+=("${pkg}")
+        else
+            unknown_libs+=("${lib}")
+        fi
+    done
+
     echo ""
-    echo -e "  Once they are installed, re-run this installer to resume."
+    echo -e "  ${BOLD}How to install the missing libraries:${RESET}"
+    if [[ "${#known_pkgs[@]}" -gt 0 ]]; then
+        echo -e "    Run:"
+        echo -e "      ${CYAN}${install_cmd} ${known_pkgs[*]}${RESET}"
+    fi
+    if [[ "${#unknown_libs[@]}" -gt 0 ]]; then
+        echo ""
+        echo -e "  These libraries are also missing and the installer doesn't know which package provides them:"
+        for lib in "${unknown_libs[@]}"; do
+            log_info "  - ${lib}"
+        done
+        echo -e "    Look them up: ${CYAN}${lookup_hint}${RESET}"
+    fi
+    echo ""
+    echo -e "  Once installed, re-run this installer."
 }
 
 install_runtime_deps() {
@@ -620,7 +649,39 @@ install_runtime_deps() {
         return
     fi
 
-    missing=$(echo "${ldd_output}" | awk '/not found/ {print $1}')
+    # Glibc version mismatch: lines like
+    #   ./binary: /lib/.../libc.so.6: version `GLIBC_2.34' not found (required by ...)
+    # Cannot be fixed by installing a package — the OS itself is too old.
+    local required_glibc
+    required_glibc=$(echo "${ldd_output}" \
+        | grep -oE 'GLIBC_[0-9]+(\.[0-9]+)+' \
+        | sed 's/^GLIBC_//' \
+        | sort -V | tail -1)
+    if [[ -n "${required_glibc}" ]]; then
+        local system_glibc
+        system_glibc=$(ldd --version 2>&1 | head -1 | awk '{print $NF}')
+        echo ""
+        log_warn "This system's glibc is too old for this build of yapper-server."
+        log_info "  Required: glibc ${required_glibc} or newer"
+        log_info "  Installed: glibc ${system_glibc:-unknown}"
+        echo ""
+        echo -e "  ${BOLD}This cannot be fixed by installing a package.${RESET}"
+        echo -e "  glibc is the base system C library; replacing it on a running OS is unsafe."
+        echo ""
+        echo -e "  ${BOLD}Recommended OS versions (glibc ≥ 2.34):${RESET}"
+        echo -e "    • Ubuntu 22.04 LTS or newer        (glibc 2.35+)"
+        echo -e "    • Debian 12 'Bookworm' or newer    (glibc 2.36+)"
+        echo -e "    • RHEL / Rocky / AlmaLinux 9+      (glibc 2.34+)"
+        echo -e "    • Fedora 35 or newer"
+        echo -e "    • Arch Linux (rolling)"
+        echo ""
+        echo -e "  Upgrade the OS and re-run this installer."
+        echo ""
+        log_fail "Unsupported glibc version"
+    fi
+
+    # Truly-missing libraries match the "=> not found" form only.
+    missing=$(echo "${ldd_output}" | awk '/=> not found/ {print $1}')
     if [[ -z "${missing}" ]]; then
         log_ok "All shared library dependencies are present"
         echo ""
@@ -628,56 +689,48 @@ install_runtime_deps() {
     fi
 
     log_warn "Some shared libraries are still missing:"
+    local -a missing_arr=()
     while IFS= read -r lib; do
-        [[ -n "${lib}" ]] && log_info "  - ${lib}"
-    done <<< "${missing}"
-
-    log_info "Attempting to resolve and install matching packages..."
-
-    # Refresh package-file index once so we can look up providers
-    case "${OS_FAMILY}" in
-        debian)
-            if ! command -v apt-file &>/dev/null; then
-                apt-get install -y -qq apt-file &>/dev/null || true
-            fi
-            if command -v apt-file &>/dev/null; then
-                log_info "Updating apt-file database (this may take a moment)..."
-                apt-file update &>/dev/null || log_warn "apt-file update failed — auto-resolution may be incomplete"
-            fi
-            ;;
-        arch)
-            log_info "Refreshing pacman file database (this may take a moment)..."
-            pacman -Fy &>/dev/null || log_warn "pacman -Fy failed — auto-resolution may be incomplete"
-            ;;
-    esac
-
-    while IFS= read -r lib; do
-        [[ -z "${lib}" ]] && continue
-        local pkg
-        pkg="$(resolve_lib_to_package "${lib}" 2>/dev/null || true)"
-        if [[ -n "${pkg}" ]]; then
-            log_info "  ${lib} → installing ${pkg}"
-            if install_package_quiet "${pkg}"; then
-                log_ok "  Installed ${pkg}"
-            else
-                log_warn "  Failed to install ${pkg}"
-            fi
-        else
-            log_warn "  Could not resolve ${lib} to a package"
+        if [[ -n "${lib}" ]]; then
+            log_info "  - ${lib}"
+            missing_arr+=("${lib}")
         fi
     done <<< "${missing}"
 
-    # Re-check after auto-install
-    ldd_output=$(ldd "${bin}" 2>&1 || true)
-    missing=$(echo "${ldd_output}" | awk '/not found/ {print $1}')
-    if [[ -z "${missing}" ]]; then
-        log_ok "All shared library dependencies are now present"
-        echo ""
-        return
+    # Try to auto-install the packages we can map from the lib name
+    local -a auto_pkgs=()
+    local lib pkg already
+    for lib in "${missing_arr[@]}"; do
+        pkg="$(guess_package_for_lib "${lib}")"
+        if [[ -n "${pkg}" ]]; then
+            already=false
+            for existing in "${auto_pkgs[@]:-}"; do
+                [[ "${existing}" == "${pkg}" ]] && { already=true; break; }
+            done
+            ${already} || auto_pkgs+=("${pkg}")
+        fi
+    done
+
+    if [[ "${#auto_pkgs[@]}" -gt 0 ]]; then
+        log_info "Trying to install: ${auto_pkgs[*]}"
+        if install_packages_quiet "${auto_pkgs[@]}"; then
+            log_ok "Installed ${auto_pkgs[*]}"
+        else
+            log_warn "Auto-install failed for one or more of: ${auto_pkgs[*]}"
+        fi
+
+        # Re-check
+        ldd_output=$(ldd "${bin}" 2>&1 || true)
+        missing=$(echo "${ldd_output}" | awk '/=> not found/ {print $1}')
+        if [[ -z "${missing}" ]]; then
+            log_ok "All shared library dependencies are now present"
+            echo ""
+            return
+        fi
     fi
 
-    # Still missing → show manual instructions and abort
-    log_warn "These libraries could not be installed automatically:"
+    # Still missing → show clear manual instructions and abort
+    log_warn "These libraries are still missing:"
     local -a still_missing=()
     while IFS= read -r lib; do
         if [[ -n "${lib}" ]]; then
