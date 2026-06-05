@@ -652,11 +652,13 @@ install_runtime_deps() {
     # Glibc version mismatch: lines like
     #   ./binary: /lib/.../libc.so.6: version `GLIBC_2.34' not found (required by ...)
     # Cannot be fixed by installing a package — the OS itself is too old.
+    # `|| true` is required because grep exits 1 when there are no matches and
+    # `set -o pipefail` would otherwise kill the script on the healthy path.
     local required_glibc
-    required_glibc=$(echo "${ldd_output}" \
+    required_glibc=$( { echo "${ldd_output}" \
         | grep -oE 'GLIBC_[0-9]+(\.[0-9]+)+' \
         | sed 's/^GLIBC_//' \
-        | sort -V | tail -1)
+        | sort -V | tail -1; } || true )
     if [[ -n "${required_glibc}" ]]; then
         local system_glibc os_label
         system_glibc=$(ldd --version 2>&1 | head -1 | awk '{print $NF}')
