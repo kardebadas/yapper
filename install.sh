@@ -39,6 +39,12 @@ INSTALL_CADDY=false
 CADDY_DOMAIN=""
 CADDY_SSL=false
 ENABLE_AUTO_UPDATE=false
+NON_INTERACTIVE=false
+LICENSE_B64=""
+
+# License-parsing state (set by parse_license_content, read by reconstruct_final_license)
+has_domain_line=false
+has_port_line=false
 
 # ── Colors ──────────────────────────────────────────────────────────────────
 
@@ -154,6 +160,67 @@ cleanup() {
 trap cleanup EXIT
 
 # ============================================================================
+#  ARGUMENT PARSING (non-interactive mode)
+# ============================================================================
+
+print_usage() {
+    cat <<'USAGE'
+Yapper Server Installer
+
+Usage:
+  install.sh                         Interactive install (prompts for everything)
+  install.sh [flags]                 Non-interactive install
+
+Flags:
+  --license=<base64>     Base64-encoded license.txt content (enables non-interactive mode).
+                         Must contain at least license_key and instance_domain.
+  --server-port=<port>   Local TCP port the server binds to (default 7880). RTC port is +1.
+  --install-caddy        Install Caddy as a reverse proxy.
+  --caddy-domain=<host>  Domain Caddy serves (default: the license instance_domain).
+  --caddy-ssl            Enable automatic HTTPS via Let's Encrypt (implies Caddy).
+  --auto-update          Enable the 24h auto-update timer.
+  --no-auto-update       Disable the 24h auto-update timer.
+  -h, --help             Show this help and exit.
+USAGE
+}
+
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --license=*)
+                LICENSE_B64="${1#*=}"
+                if [[ -z "${LICENSE_B64}" ]]; then
+                    echo "Error: --license requires a non-empty value." >&2
+                    exit 1
+                fi
+                NON_INTERACTIVE=true
+                ;;
+            --server-port=*)
+                SERVER_PORT="${1#*=}"
+                if ! [[ "${SERVER_PORT}" =~ ^[0-9]+$ ]] || \
+                   [[ "${SERVER_PORT}" -lt 1 || "${SERVER_PORT}" -gt 65534 ]]; then
+                    echo "Error: --server-port must be a number between 1 and 65534." >&2
+                    exit 1
+                fi
+                ;;
+            --install-caddy)  INSTALL_CADDY=true ;;
+            --caddy-domain=*) CADDY_DOMAIN="${1#*=}" ;;
+            --caddy-ssl)      CADDY_SSL=true; INSTALL_CADDY=true ;;
+            --auto-update)    ENABLE_AUTO_UPDATE=true ;;
+            --no-auto-update) ENABLE_AUTO_UPDATE=false ;;
+            -h|--help)        print_usage; exit 0 ;;
+            *)
+                echo "Unknown option: $1" >&2
+                echo "" >&2
+                print_usage >&2
+                exit 1
+                ;;
+        esac
+        shift
+    done
+}
+
+# ============================================================================
 #  INTERACTIVE PHASE
 # ============================================================================
 
@@ -233,31 +300,30 @@ check_prerequisites() {
 
 # ── [2/10] License input ───────────────────────────────────────────────────
 
-setup_license() {
-    log_step 2 "License setup"
-    echo ""
-    echo -e "  ${BOLD}How to get your license:${RESET}"
-    echo -e "    1. Log in to ${CYAN}https://yapper.gg${RESET}"
-    echo -e "    2. Open ${BOLD}Licenses${RESET} from the menu"
-    echo -e "    3. Click ${BOLD}View License${RESET} on the license you want to use"
-    echo -e "    4. Copy the entire contents shown on that page"
-    echo ""
-    echo -e "  Paste your license below, then type ${BOLD}END${RESET} on its own line when finished:"
-    echo ""
-
-    LICENSE_CONTENT=""
-    while IFS= read -r line </dev/tty; do
-        [[ "${line}" == "END" ]] && break
-        LICENSE_CONTENT+="${line}"$'\n'
-    done
-
-    if [[ -z "${LICENSE_CONTENT}" ]]; then
-        log_fail "No license content provided"
+# Decode LICENSE_B64 into LICENSE_CONTENT. Fails hard if the blob is invalid.
+read_license_from_base64() {
+    if ! LICENSE_CONTENT="$(printf '%s' "${LICENSE_B64}" | base64 -d 2>/dev/null)"; then
+        log_fail "Could not decode --license value (not valid base64)"
     fi
+    if [[ -z "${LICENSE_CONTENT}" ]]; then
+        log_fail "Decoded --license value is empty"
+    fi
+}
 
-    # Parse fields
-    local has_domain_line=false
-    local has_port_line=false
+# Return 0 if $1 is an integer in 1..65534, else 1.
+is_valid_port() {
+    local port="$1"
+    [[ "${port}" =~ ^[0-9]+$ ]] || return 1
+    (( port >= 1 && port <= 65534 )) || return 1
+    return 0
+}
+
+# Parse LICENSE_CONTENT into LICENSE_KEY / INSTANCE_DOMAIN / INSTANCE_PORT.
+# Sets has_domain_line / has_port_line for reconstruct_final_license.
+# Fails hard if license_key is absent.
+parse_license_content() {
+    has_domain_line=false
+    has_port_line=false
 
     while IFS= read -r line; do
         [[ "${line}" =~ ^#.*$ ]] && continue
@@ -275,9 +341,60 @@ setup_license() {
         log_fail "License is missing 'license_key' field"
     fi
     log_ok "License key found"
+}
+
+# Rebuild FINAL_LICENSE from LICENSE_CONTENT with INSTANCE_DOMAIN / INSTANCE_PORT
+# filled in (appending the lines if the source license omitted them).
+reconstruct_final_license() {
+    FINAL_LICENSE=""
+    while IFS= read -r line; do
+        if [[ "${line}" =~ ^instance_domain= ]]; then
+            FINAL_LICENSE+="instance_domain=${INSTANCE_DOMAIN}"$'\n'
+        elif [[ "${line}" =~ ^instance_port= ]]; then
+            FINAL_LICENSE+="instance_port=${INSTANCE_PORT}"$'\n'
+        else
+            FINAL_LICENSE+="${line}"$'\n'
+        fi
+    done <<< "${LICENSE_CONTENT}"
+
+    ${has_domain_line} || FINAL_LICENSE+="instance_domain=${INSTANCE_DOMAIN}"$'\n'
+    ${has_port_line}   || FINAL_LICENSE+="instance_port=${INSTANCE_PORT}"$'\n'
+}
+
+setup_license() {
+    log_step 2 "License setup"
+
+    if [[ "${NON_INTERACTIVE}" == true ]]; then
+        read_license_from_base64
+    else
+        echo ""
+        echo -e "  ${BOLD}How to get your license:${RESET}"
+        echo -e "    1. Log in to ${CYAN}https://yapper.gg${RESET}"
+        echo -e "    2. Open ${BOLD}Licenses${RESET} from the menu"
+        echo -e "    3. Click ${BOLD}View License${RESET} on the license you want to use"
+        echo -e "    4. Copy the entire contents shown on that page"
+        echo ""
+        echo -e "  Paste your license below, then type ${BOLD}END${RESET} on its own line when finished:"
+        echo ""
+
+        LICENSE_CONTENT=""
+        while IFS= read -r line </dev/tty; do
+            [[ "${line}" == "END" ]] && break
+            LICENSE_CONTENT+="${line}"$'\n'
+        done
+
+        if [[ -z "${LICENSE_CONTENT}" ]]; then
+            log_fail "No license content provided"
+        fi
+    fi
+
+    # Parse fields (shared with the non-interactive path)
+    parse_license_content
 
     # Domain
-    if [[ -z "${INSTANCE_DOMAIN}" ]]; then
+    if [[ "${NON_INTERACTIVE}" == true ]]; then
+        [[ -n "${INSTANCE_DOMAIN}" ]] || log_fail "License is missing instance_domain (required for non-interactive install)"
+    elif [[ -z "${INSTANCE_DOMAIN}" ]]; then
         echo ""
         while true; do
             read -rp "  Enter the domain for this instance (e.g., chat.example.com): " INSTANCE_DOMAIN </dev/tty
@@ -296,7 +413,10 @@ setup_license() {
     log_ok "Domain: ${INSTANCE_DOMAIN}"
 
     # Port
-    if [[ -z "${INSTANCE_PORT}" ]]; then
+    if [[ "${NON_INTERACTIVE}" == true ]]; then
+        INSTANCE_PORT="${INSTANCE_PORT:-7880}"
+        is_valid_port "${INSTANCE_PORT}" || log_fail "Invalid instance_port: ${INSTANCE_PORT} (must be 1-65534)"
+    elif [[ -z "${INSTANCE_PORT}" ]]; then
         echo ""
         while true; do
             read -rp "  Enter the port for this instance [default=7880]: " INSTANCE_PORT </dev/tty
@@ -316,21 +436,26 @@ setup_license() {
     fi
     log_ok "Instance port: ${INSTANCE_PORT}"
 
-    # Ask for server listen port (separate from the license instance_port)
-    echo ""
-    echo -e "  The server listen port is the local TCP port the Yapper binary binds to."
-    echo -e "  This is different from the instance port in the license (which may be 443 behind a reverse proxy)."
-    while true; do
-        read -rp "  Yapper server listen port [default=7880]: " SERVER_PORT </dev/tty
+    # Server listen port (separate from the license instance_port)
+    if [[ "${NON_INTERACTIVE}" == true ]]; then
         SERVER_PORT="${SERVER_PORT:-7880}"
-        if ! [[ "${SERVER_PORT}" =~ ^[0-9]+$ ]]; then
-            echo "  Port must be a number."; SERVER_PORT=""
-        elif [[ "${SERVER_PORT}" -lt 1 || "${SERVER_PORT}" -gt 65534 ]]; then
-            echo "  Port must be between 1 and 65534."; SERVER_PORT=""
-        else
-            break
-        fi
-    done
+        is_valid_port "${SERVER_PORT}" || log_fail "Invalid --server-port: ${SERVER_PORT} (must be 1-65534)"
+    else
+        echo ""
+        echo -e "  The server listen port is the local TCP port the Yapper binary binds to."
+        echo -e "  This is different from the instance port in the license (which may be 443 behind a reverse proxy)."
+        while true; do
+            read -rp "  Yapper server listen port [default=7880]: " SERVER_PORT </dev/tty
+            SERVER_PORT="${SERVER_PORT:-7880}"
+            if ! [[ "${SERVER_PORT}" =~ ^[0-9]+$ ]]; then
+                echo "  Port must be a number."; SERVER_PORT=""
+            elif [[ "${SERVER_PORT}" -lt 1 || "${SERVER_PORT}" -gt 65534 ]]; then
+                echo "  Port must be between 1 and 65534."; SERVER_PORT=""
+            else
+                break
+            fi
+        done
+    fi
     SERVER_RTC_PORT=$(( SERVER_PORT + 1 ))
     log_ok "Server listen port: ${SERVER_PORT}"
     log_ok "Server RTC port: ${SERVER_RTC_PORT}"
@@ -340,28 +465,74 @@ setup_license() {
     require_free_tcp_port "${SERVER_RTC_PORT}" "Yapper RTC"
     log_ok "Ports ${SERVER_PORT} and ${SERVER_RTC_PORT} are available"
 
-    # Reconstruct license with domain/port filled in
-    FINAL_LICENSE=""
-    while IFS= read -r line; do
-        if [[ "${line}" =~ ^instance_domain= ]]; then
-            FINAL_LICENSE+="instance_domain=${INSTANCE_DOMAIN}"$'\n'
-        elif [[ "${line}" =~ ^instance_port= ]]; then
-            FINAL_LICENSE+="instance_port=${INSTANCE_PORT}"$'\n'
-        else
-            FINAL_LICENSE+="${line}"$'\n'
-        fi
-    done <<< "${LICENSE_CONTENT}"
-
-    ${has_domain_line} || FINAL_LICENSE+="instance_domain=${INSTANCE_DOMAIN}"$'\n'
-    ${has_port_line}   || FINAL_LICENSE+="instance_port=${INSTANCE_PORT}"$'\n'
+    # Reconstruct license with domain/port filled in (shared)
+    reconstruct_final_license
 
     echo ""
 }
 
 # ── [3/10] Options ──────────────────────────────────────────────────────────
 
+# Echo the port Caddy will publish on, based on the SSL choice.
+caddy_expected_port() {
+    if [[ "${CADDY_SSL}" == true ]]; then
+        echo "443"
+    else
+        echo "80"
+    fi
+}
+
+# Non-interactive equivalent of the interactive port-mismatch prompt:
+# force INSTANCE_PORT (and the FINAL_LICENSE line) to the port Caddy publishes,
+# logging a warning if it changed. No-op when Caddy is disabled.
+apply_noninteractive_caddy_port() {
+    [[ "${INSTALL_CADDY}" == true ]] || return 0
+    local expected_port
+    expected_port="$(caddy_expected_port)"
+    [[ "${INSTANCE_PORT}" == "${expected_port}" ]] && return 0
+
+    local old_port="${INSTANCE_PORT}"
+    INSTANCE_PORT="${expected_port}"
+    FINAL_LICENSE="${FINAL_LICENSE//instance_port=${old_port}$'\n'/instance_port=${INSTANCE_PORT}$'\n'}"
+    log_warn "instance_port auto-set to ${INSTANCE_PORT} to match Caddy (was ${old_port})"
+}
+
 collect_options() {
     log_step 3 "Installation options"
+
+    if [[ "${NON_INTERACTIVE}" == true ]]; then
+        if [[ "${INSTALL_CADDY}" == true ]]; then
+            CADDY_DOMAIN="${CADDY_DOMAIN:-${INSTANCE_DOMAIN}}"
+            CADDY_DOMAIN="${CADDY_DOMAIN#http://}"
+            CADDY_DOMAIN="${CADDY_DOMAIN#https://}"
+            CADDY_DOMAIN="${CADDY_DOMAIN%/}"
+            [[ -n "${CADDY_DOMAIN}" && ! "${CADDY_DOMAIN}" =~ [[:space:]] ]] \
+                || log_fail "Invalid --caddy-domain: must be a non-empty hostname with no spaces"
+            log_ok "Caddy domain: ${CADDY_DOMAIN}"
+            if [[ "${CADDY_SSL}" == true ]]; then
+                require_free_tcp_port 80 "Caddy HTTP (ACME)" "caddy_ssl"
+                require_free_tcp_port 443 "Caddy HTTPS" "caddy_ssl"
+            else
+                require_free_tcp_port 80 "Caddy HTTP"
+            fi
+            apply_noninteractive_caddy_port
+        else
+            log_info "Skipping reverse proxy"
+        fi
+
+        if [[ "${ENABLE_AUTO_UPDATE}" == true ]]; then
+            log_ok "Automatic updates enabled"
+        else
+            log_info "Automatic updates disabled"
+        fi
+
+        echo ""
+        echo -e "${BOLD}────────────────────────────────────────────────────────────${RESET}"
+        echo -e "${BOLD}  Starting installation — no more prompts from here${RESET}"
+        echo -e "${BOLD}────────────────────────────────────────────────────────────${RESET}"
+        echo ""
+        return
+    fi
 
     if prompt_yes_no "Install Caddy as a reverse proxy?"; then
         INSTALL_CADDY=true
@@ -1145,6 +1316,8 @@ print_summary() {
 # ============================================================================
 
 main() {
+    parse_args "$@"
+
     echo ""
     echo -e "${BOLD}Yapper Server Installer${RESET}"
     echo -e "https://yapper.gg"
@@ -1166,4 +1339,9 @@ main() {
     print_summary
 }
 
-main "$@"
+# Only run the installer when executed directly. When sourced for tests
+# (YAPPER_INSTALL_LIB=1), expose the functions without running anything.
+# This does NOT affect `curl ... | bash`, where YAPPER_INSTALL_LIB is unset.
+if [[ -z "${YAPPER_INSTALL_LIB:-}" ]]; then
+    main "$@"
+fi
